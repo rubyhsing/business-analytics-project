@@ -1,0 +1,145 @@
+---
+title: "108304002邢芳瑜_HW3"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# 航空業的顧客滿意度問題
+資料：airline_survey.csv
+首先先讀入資料，轉換Y變量為factor
+
+```{r}
+library(dplyr)
+airline <- read.csv("airline_survey.csv",sep=",")
+airline$satisfaction <- as.factor(ifelse(airline$satisfaction == "satisfied", 1, 0))
+table(airline$satisfaction) 
+```
+抽取樣本(除去缺失值後得到998筆資料)，並將種類的變量轉為數值型
+```{r}
+set.seed(0)
+index <- sample(1:nrow(airline),1000)
+airline.sm<- airline[index,]
+airline.sm <- na.omit(airline.sm)
+airline.sm <- airline.sm %>%
+  mutate(
+    Gender = ifelse(Gender=='Male',1,0),
+    Customer.Type = ifelse(Customer.Type=='Loyal Customer',1,0),
+    Type.of.Travel = ifelse(Type.of.Travel=='Business travel',1,0),
+    Class = ifelse(Class=='Business',0,ifelse(Class=='Eco',1,2)),
+    Flight.Distance = (Flight.Distance - min(Flight.Distance)) / (max(Flight.Distance) - min(Flight.Distance)),
+    Departure.Delay.in.Minutes= (Departure.Delay.in.Minutes - min(Departure.Delay.in.Minutes)) / (max(Departure.Delay.in.Minutes) - min(Departure.Delay.in.Minutes)),
+    Arrival.Delay.in.Minutes= (Arrival.Delay.in.Minutes - min(Arrival.Delay.in.Minutes)) / (max(Arrival.Delay.in.Minutes) - min(Arrival.Delay.in.Minutes))
+    )
+table(airline.sm$satisfaction)
+```
+
+
+## 1.辨認出滿意與不滿意客戶
+### 任選1種監督式學習方法配適模型，預測滿意度satisfaction(2類：滿意、中立或不滿意)
+
+```{r}
+#決策樹
+library(rpart)
+tree <- rpart(satisfaction ~ .-id -X ,data=airline.sm, method="class")
+library(rpart.plot) 
+rpart.plot(tree)
+rpart.rules(tree,cover=T)
+tree_prune <- prune(tree, cp = tree$cptable[which.min(tree$cptable[,"xerror"]),"CP"])
+rpart.plot(tree_prune)
+```
+
+### 找出重要變數：哪些因素影響客戶滿意度
+
+扣除id和X兩個不重要的變量後，以隨機森林法進行模型配適
+
+```{r}
+library(randomForest)
+rf <- randomForest(satisfaction ~ .-id -X, data = airline.sm, importance=TRUE, ntree=100)
+varImpPlot(rf, n.var = min(20, nrow(rf$importance)),
+           main = 'Top 20 - variable importance')
+```
+
+-----
+
+## 2. 描述客戶
+### 任選1種非監督式方法，將客戶分群，介紹你分出來的群，對於這些不同的客戶群集提出給該航空業的商業策略建議
+
+針對此三種客群的商業策略建議：
+
+#### 1.中老年族群(第二群)：搭乘經濟艙和商務艙的旅客大約各占一半，對於線上登機的滿意度高，可持續維持這部分服務。
+
+#### 2. 壯年族群(第三群)：因為商務旅行需求高，搭機航程較長，重視座位、機上腳部空間的舒適度，另外，登機服務也是讓他們滿意度高的指標，因此持續增進這方面的服務，可讓商務旅行者感到滿意。
+
+#### 3. 年輕族群(第一群)：因為旅行預算有限，通常搭乘經濟艙比例高，因此感到搭機過程不舒服，線上登機的滿意度也較其他族群較低，可針對年輕族群使用情況做進行進一步瞭解，另外針對機上娛樂也可以做加強(不滿意度相對較高)。
+
+-----
+
+###實作方法
+
+這裡選取了11個先前透過Random Forest得出的MDG最大的11個變數，作為描述客戶的資料。
+使用*階層式分群方式*，並使用歐式距離、ward method進行計算，並繪製出樹狀模型。
+
+```{r}
+library(factoextra)
+data <- airline.sm[,c(5:9,11,14:18)]
+E.dist <- dist(data, method="euclidean") # 歐式距離
+tree1 <- hclust(E.dist, method="ward.D2")
+fviz_nbclust(data, FUN = hcut, method = "wss") #運用Gap statistic找適合的分群數目
+plot(tree1, xlab="Euclidean",h=-1)
+rect.hclust(tree1,k=3,border="red")
+```
+```{r}
+cluster <- cutree(tree1, k=3)
+table(cluster) 
+data = cbind(data,cluster)
+```
+接著針對分群結果，將選取的11個變數分布情況繪製出來
+```{r}
+ggplot(data, aes(x=as.factor(cluster), y=Flight.Distance)) + 
+  geom_boxplot()
+ggplot(data, aes(x=as.factor(cluster), y=Age)) + 
+  geom_boxplot()
+ggplot( data =data) +
+  geom_bar( aes( x = Type.of.Travel)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Class)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Inflight.wifi.service)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Ease.of.Online.booking)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Online.boarding)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Seat.comfort)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Inflight.entertainment)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = Leg.room.service)) + 
+  facet_wrap( ~ cluster)
+ggplot( data =data) +
+  geom_bar( aes( x = On.board.service)) + 
+  facet_wrap( ~ cluster)
+```
+-----
+從上面的圖型觀察中發現這三群最明顯的差別是年齡層
+
+第二群是年紀最長的一群(55-65)，第一群是最年輕的一群(30以下)，第三群則介於中間(40-50)
+
+可以從出遊目的發現，第三群的商務旅行需求比例最高，
+
+從搭乘艙別也可以看出第三群搭乘商務艙比例較高，第一群則是以經濟艙為主，
+
+第三群顧客感到座位舒適度、腳部空間服務滿意度也明顯高於第一群，
+
+對於wifi,online booking,onboard服務的滿意度，三者分布沒有太大差別，
+
+對於線上登機、inflight娛樂，第三群的滿意度比其他兩群來得高。
+
